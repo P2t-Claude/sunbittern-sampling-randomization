@@ -101,7 +101,7 @@ The script generates:
 
 If used or adapted, please cite:
 
-Stan (2026). Sunbittern sampling randomization script (Version 1.0). Zenodo. DOI: [to be added]
+Stan (2026). Sunbittern sampling randomization script (Version 1.0). Zenodo. DOI: https://doi.org/10.5281/zenodo.18827241
 
 ---
 
