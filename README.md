@@ -61,7 +61,7 @@ The schedule is fully reproducible using a fixed random seed.
 Command used to generate the study schedule:
 
 cd $HOME\Desktop  
-python planning.py --start-date 2026-03-02 --seed 18 --out schedule.csv  
+python planning.py --start-date 2026-03-02 --seed 33 --out schedule.csv  
 
 Parameters:
 - `--start-date` : Monday corresponding to Week 1 (YYYY-MM-DD format)
