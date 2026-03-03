@@ -1,368 +1,233 @@
-#!/usr/bin/env python3
-"""
-10-week constrained randomized sampling schedule with 1-hour sessions.
-
-Goal requested by user:
-- Total observation effort = 160 hours, using 1-hour sessions => 160 sessions total
-- 10 weeks, 4 observation days/week => 40 observation days total
-- Therefore: 4 sessions/day (40*4 = 160 sessions)
-
-Constraints:
-- 10 weeks total
-- Two conditions: Control and Natural, 5 weeks each
-- Week 1 must be Control
-- 4 observation days per week, randomly selected
-- Week 1: Monday is NOT allowed as an observation day (nests not placed yet)
-- Each observation day has 4 sessions of 1 hour within 08:00–17:00
-  => start hours are 08..16 (inclusive)
-- Within a day, sessions must not overlap => start hours must be distinct
-
-Hour-bin balancing:
-- Hour-bins are the 1-hour intervals: 08–09, 09–10, ..., 16–17 (9 bins, start hours 8..16)
-- With 160 sessions total, ideal per bin is 160/9 ≈ 17.78
-- We balance exactly as evenly as possible: 7 bins get 18 sessions, 2 bins get 17 sessions.
-  (Which bins get 18 vs 17 is randomized but reproducible via --seed)
-
-Usage (Windows PowerShell):
-  cd $HOME\\Desktop
-  python planning.py --start-date 2026-03-02 --seed 18 --out schedule.csv
-"""
-
-from __future__ import annotations
-
-import argparse
-import csv
 import random
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
-from typing import Dict, List, Tuple
+import datetime
+import csv
+import argparse
+from collections import Counter
+from pathlib import Path
+
+# --------------------------------------------------
+# PARAMETERS
+# --------------------------------------------------
+
+WEEKS = 10
+DAYS_PER_WEEK = 4
+SESSIONS_PER_DAY = 4
+START_HOUR = 9
+END_HOUR = 17  # last session is 16:00–17:00
+HOUR_BINS = list(range(START_HOUR, END_HOUR))  # 9–16 (8 bins)
+
+EXCLUDED_DATE = datetime.date(2026, 3, 3)  # exclude Tuesday 03/03/2026
 
 
-DAY_NAMES_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+# --------------------------------------------------
+# HELPERS
+# --------------------------------------------------
+
+def format_date(d: datetime.date) -> str:
+    return d.strftime("%d/%m/%Y")
 
 
-@dataclass(frozen=True)
-class Session:
-    week_index: int
-    condition: str
-    day_date: date
-    day_name: str
-    session_index: int
-    start_hour: int
-    start_time: str
-    end_time: str
+def week_range_str(week_start: datetime.date) -> str:
+    week_end = week_start + datetime.timedelta(days=6)
+    return f"{format_date(week_start)}–{format_date(week_end)}"
 
 
-def parse_iso_date(s: str) -> date:
-    try:
-        return datetime.strptime(s, "%Y-%m-%d").date()
-    except ValueError as e:
-        raise SystemExit(f"Invalid --start-date '{s}'. Expected YYYY-MM-DD.") from e
+# --------------------------------------------------
+# CONDITIONS
+# --------------------------------------------------
+
+def generate_conditions(rng: random.Random):
+    # 5 Control + 5 Natural, Week 1 forced to Control
+    conditions = ["Control"] * 5 + ["Natural"] * 5
+    conditions.remove("Control")
+    rng.shuffle(conditions)
+    return ["Control"] + conditions
 
 
-def daterange_week(start: date, week_index: int) -> List[date]:
-    week_start = start + timedelta(days=(week_index - 1) * 7)
-    return [week_start + timedelta(days=i) for i in range(7)]
+# --------------------------------------------------
+# DATES
+# --------------------------------------------------
+
+def generate_week_dates(start_date: datetime.date):
+    all_weeks = []
+    for w in range(WEEKS):
+        week_start = start_date + datetime.timedelta(weeks=w)
+        week_dates = [week_start + datetime.timedelta(days=i) for i in range(7)]
+        all_weeks.append(week_dates)
+    return all_weeks
 
 
-def choose_conditions(rng: random.Random) -> List[str]:
-    # Week 1 fixed as Control; remaining 9 weeks randomized with 4 Control + 5 Natural
-    remaining = ["Control"] * 4 + ["Natural"] * 5
-    rng.shuffle(remaining)
-    return ["Control"] + remaining
+# --------------------------------------------------
+# HOUR-BIN ASSIGNMENT (perfect balance: 160 sessions / 8 bins = 20 each)
+# --------------------------------------------------
+
+def assign_sessions_balanced(rng: random.Random):
+    total_sessions = WEEKS * DAYS_PER_WEEK * SESSIONS_PER_DAY  # 160
+    if total_sessions % len(HOUR_BINS) != 0:
+        raise RuntimeError("Total sessions not divisible by number of hour-bins.")
+
+    target_per_bin = total_sessions // len(HOUR_BINS)  # 20
+    bin_pool = []
+    for h in HOUR_BINS:
+        bin_pool.extend([h] * target_per_bin)
+
+    rng.shuffle(bin_pool)
+    targets = {h: target_per_bin for h in HOUR_BINS}
+    return bin_pool, targets
 
 
-def choose_observation_days_for_week(rng: random.Random, week_dates: List[date], week_index: int) -> List[date]:
-    # Week 1: exclude Monday
-    if week_index == 1:
-        allowed = [d for d in week_dates if d.weekday() != 0]
-    else:
-        allowed = week_dates[:]
-    chosen = rng.sample(allowed, 4)
-    chosen.sort()
-    return chosen
+# --------------------------------------------------
+# SCHEDULE GENERATION
+# --------------------------------------------------
 
-
-def fmt_time(h: int) -> str:
-    return f"{h:02d}:00"
-
-
-def build_obs_days(start_date: date, seed: int) -> List[Tuple[int, str, date]]:
+def generate_schedule(start_date: datetime.date, seed: int):
     rng = random.Random(seed)
-    conditions = choose_conditions(rng)
 
-    obs_days: List[Tuple[int, str, date]] = []
-    for week_idx in range(1, 11):
-        week_dates = daterange_week(start_date, week_idx)
-        chosen_days = choose_observation_days_for_week(rng, week_dates, week_idx)
-        cond = conditions[week_idx - 1]
-        for d in chosen_days:
-            obs_days.append((week_idx, cond, d))
+    conditions = generate_conditions(rng)
+    all_weeks = generate_week_dates(start_date)
+    bin_pool, targets = assign_sessions_balanced(rng)
 
-    # Stable ordering for readable printing
-    obs_days.sort(key=lambda x: (x[0], x[2]))
-    return obs_days
+    schedule_rows = []  # for CSV (flat list)
+    schedule_by_week = []  # for terminal printing (structured)
+    assigned_hours = []
+    bin_index = 0
 
+    for w in range(WEEKS):
+        week_dates = all_weeks[w]
+        week_start = week_dates[0]
 
-def build_balanced_hour_bin_targets(rng: random.Random) -> Dict[int, int]:
-    """
-    Hour bins correspond to start hours 8..16 inclusive (9 bins).
-    Total sessions = 160. Balance as evenly as possible:
-      base = 160//9 = 17, remainder = 7
-      => 7 bins at 18 and 2 bins at 17.
-    """
-    bins = list(range(8, 17))  # 8..16
-    base = 160 // len(bins)    # 17
-    rem = 160 % len(bins)      # 7
+        possible_days = week_dates.copy()
 
-    targets = {b: base for b in bins}
-    rng.shuffle(bins)
-    for b in bins[:rem]:
-        targets[b] += 1
-    return targets
+        # Exclude Monday in Week 1 (installation)
+        if w == 0:
+            possible_days = [d for d in possible_days if d.weekday() != 0]
 
+        # Exclude specific date 03/03/2026
+        possible_days = [d for d in possible_days if d != EXCLUDED_DATE]
 
-def weighted_pick_one(rng: random.Random, items: List[int], weights: List[int]) -> int:
-    """Weighted choice among items, proportional to weights (all weights > 0)."""
-    total = sum(weights)
-    r = rng.random() * total
-    acc = 0.0
-    for it, w in zip(items, weights):
-        acc += w
-        if acc >= r:
-            return it
-    return items[-1]
-
-
-def pick_k_distinct_hours_weighted(rng: random.Random, counts: Dict[int, int], k: int) -> List[int] | None:
-    """
-    Pick k distinct start hours from those with count>0, weighted by remaining counts.
-    Returns None if not enough distinct hours remain.
-    """
-    available = [h for h, c in counts.items() if c > 0]
-    if len(available) < k:
-        return None
-
-    chosen: List[int] = []
-    temp_counts = counts  # mutate directly after final selection; keep chosen unique via a set
-
-    chosen_set = set()
-    for _ in range(k):
-        avail = [h for h, c in temp_counts.items() if c > 0 and h not in chosen_set]
-        if not avail:
-            return None
-        w = [temp_counts[h] for h in avail]
-        h_pick = weighted_pick_one(rng, avail, w)
-        chosen.append(h_pick)
-        chosen_set.add(h_pick)
-
-    return chosen
-
-
-def assign_sessions_to_days(
-    rng: random.Random,
-    obs_days: List[Tuple[int, str, date]],
-    targets: Dict[int, int],
-    sessions_per_day: int = 4,
-    max_restarts: int = 2000,
-) -> Dict[Tuple[int, date], List[int]]:
-    """
-    Assign 'sessions_per_day' distinct 1-hour sessions to each observation day,
-    using the remaining hour-bin target counts.
-
-    Returns mapping: (week_idx, date) -> sorted list of start hours.
-    """
-    for _ in range(max_restarts):
-        remaining = dict(targets)
-        mapping: Dict[Tuple[int, date], List[int]] = {}
-
-        # Randomize day order to reduce dead-ends
-        days = obs_days[:]
-        rng.shuffle(days)
-
-        ok = True
-        for (week_idx, _cond, d) in days:
-            key = (week_idx, d)
-
-            picks = pick_k_distinct_hours_weighted(rng, remaining, sessions_per_day)
-            if picks is None:
-                ok = False
-                break
-
-            # Check feasibility (all picks must still be available)
-            feasible = all(remaining[h] > 0 for h in picks)
-            if not feasible:
-                ok = False
-                break
-
-            # Commit: decrement counts
-            for h in picks:
-                remaining[h] -= 1
-
-            mapping[key] = sorted(picks)
-
-        # Success only if all hour-bin targets satisfied exactly
-        if ok and all(v == 0 for v in remaining.values()) and len(mapping) == len(obs_days):
-            return mapping
-
-    raise RuntimeError(
-        "Failed to generate a schedule satisfying all constraints and exact hour-bin balance. "
-        "Try changing the seed."
-    )
-
-
-def compute_achieved_counts(mapping: Dict[Tuple[int, date], List[int]]) -> Dict[int, int]:
-    achieved = {h: 0 for h in range(8, 17)}
-    for starts in mapping.values():
-        for h in starts:
-            achieved[h] += 1
-    return achieved
-
-
-def make_sessions(start_date: date, seed: int) -> Tuple[List[Session], Dict[int, int], Dict[int, int]]:
-    # Observation days + conditions (seeded)
-    obs_days = build_obs_days(start_date, seed)
-
-    # Targets for hour-bins (seeded but using a separate stream for clarity)
-    rng_targets = random.Random(seed + 12345)
-    targets = build_balanced_hour_bin_targets(rng_targets)
-
-    # Assign sessions to days (separate RNG stream)
-    rng_assign = random.Random(seed + 99991)
-    mapping = assign_sessions_to_days(rng_assign, obs_days, targets, sessions_per_day=4)
-
-    achieved = compute_achieved_counts(mapping)
-
-    # Build session rows
-    sessions: List[Session] = []
-    for (week_idx, cond, d) in obs_days:
-        day_name = DAY_NAMES_EN[d.weekday()]
-        start_hours = mapping[(week_idx, d)]
-        for sess_idx, h in enumerate(start_hours, start=1):
-            sessions.append(
-                Session(
-                    week_index=week_idx,
-                    condition=cond,
-                    day_date=d,
-                    day_name=day_name,
-                    session_index=sess_idx,
-                    start_hour=h,
-                    start_time=fmt_time(h),
-                    end_time=fmt_time(h + 1),
-                )
+        if len(possible_days) < DAYS_PER_WEEK:
+            raise RuntimeError(
+                f"Not enough available days in Week {w+1} after exclusions."
             )
 
-    sessions.sort(key=lambda s: (s.week_index, s.day_date, s.start_hour))
-    return sessions, targets, achieved
+        selected_days = sorted(rng.sample(possible_days, DAYS_PER_WEEK))
+
+        week_block = {
+            "week": w + 1,
+            "condition": conditions[w],
+            "range": week_range_str(week_start),
+            "days": []
+        }
+
+        for day in selected_days:
+            sessions = []
+            for _ in range(SESSIONS_PER_DAY):
+                hour = bin_pool[bin_index]
+                bin_index += 1
+                assigned_hours.append(hour)
+                sessions.append((hour, f"{hour:02d}:00–{hour+1:02d}:00"))
+
+            sessions.sort(key=lambda x: x[0])
+            session_str = ", ".join(s for _, s in sessions)
+
+            # For CSV
+            schedule_rows.append([
+                w + 1,
+                conditions[w],
+                format_date(day),
+                session_str
+            ])
+
+            # For terminal output
+            week_block["days"].append((day, session_str))
+
+        schedule_by_week.append(week_block)
+
+    achieved = Counter(assigned_hours)
+    total_sessions = WEEKS * DAYS_PER_WEEK * SESSIONS_PER_DAY
+    ideal = total_sessions / len(HOUR_BINS)  # 20.0 exactly here
+    max_abs_dev = max(abs(achieved.get(h, 0) - ideal) for h in HOUR_BINS)
+
+    return schedule_rows, schedule_by_week, targets, achieved, ideal, max_abs_dev
 
 
-def sanity_checks(sessions: List[Session], targets: Dict[int, int], achieved: Dict[int, int]) -> None:
-    # 160 sessions total
-    if len(sessions) != 160:
-        raise AssertionError(f"Expected 160 sessions, got {len(sessions)}")
+# --------------------------------------------------
+# OUTPUT: CSV
+# --------------------------------------------------
 
-    # Week 1 is Control
-    week1 = [s for s in sessions if s.week_index == 1]
-    if not week1 or week1[0].condition != "Control":
-        raise AssertionError("Week 1 is not Control")
-
-    # Week 1: no Monday
-    for s in week1:
-        if s.day_name == "Monday":
-            raise AssertionError("Week 1 includes Monday observation (not allowed)")
-
-    # Per day: 4 distinct sessions
-    per_day: Dict[Tuple[int, date], List[Session]] = {}
-    for s in sessions:
-        per_day.setdefault((s.week_index, s.day_date), []).append(s)
-
-    if len(per_day) != 40:
-        raise AssertionError(f"Expected 40 observation days, got {len(per_day)}")
-
-    for key, lst in per_day.items():
-        if len(lst) != 4:
-            raise AssertionError(f"Day {key} has {len(lst)} sessions, expected 4")
-        starts = [x.start_hour for x in lst]
-        if len(set(starts)) != 4:
-            raise AssertionError(f"Day {key} has overlapping sessions (duplicate start hour).")
-
-    # Hour-bin balance exact
-    for h in range(8, 17):
-        if achieved[h] != targets[h]:
-            raise AssertionError(
-                f"Hour-bin {h:02d}:00–{h+1:02d}:00 achieved={achieved[h]} target={targets[h]}"
-            )
+def save_schedule_csv(schedule_rows, filename: str):
+    with open(filename, mode="w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["Week", "Condition", "Date", "Sessions"])
+        w.writerows(schedule_rows)
 
 
-def print_schedule(sessions: List[Session], start_date: date) -> None:
-    by_week: Dict[int, List[Session]] = {}
-    for s in sessions:
-        by_week.setdefault(s.week_index, []).append(s)
-
-    for week_idx in range(1, 11):
-        week_start = start_date + timedelta(days=(week_idx - 1) * 7)
-        week_end = week_start + timedelta(days=6)
-        cond = by_week[week_idx][0].condition
-        print(f"\nWeek {week_idx} ({week_start:%d/%m/%Y}–{week_end:%d/%m/%Y}) — {cond}")
-
-        # group by date
-        day_map: Dict[date, List[Session]] = {}
-        for s in by_week[week_idx]:
-            day_map.setdefault(s.day_date, []).append(s)
-
-        for d in sorted(day_map.keys()):
-            lst = sorted(day_map[d], key=lambda x: x.start_hour)
-            slots = ", ".join([f"{ss.start_time}–{ss.end_time}" for ss in lst])
-            print(f"- {d:%d/%m/%Y} ({DAY_NAMES_EN[d.weekday()]}): {slots}")
+def save_hourbin_csv(targets, achieved, ideal: float, max_abs_dev: float, filename: str):
+    with open(filename, mode="w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["Hour-bin", "Target", "Achieved"])
+        for h in HOUR_BINS:
+            w.writerow([f"{h:02d}:00–{h+1:02d}:00", targets[h], achieved.get(h, 0)])
+        w.writerow([])
+        w.writerow(["Ideal per bin", f"{ideal:.2f}", ""])
+        w.writerow(["Max absolute deviation from ideal", f"{max_abs_dev:.2f}", ""])
 
 
-def print_hour_bin_summary(targets: Dict[int, int], achieved: Dict[int, int]) -> None:
-    ideal = 160 / 9
-    print("\nHour-bin coverage summary (1-hour bins):")
-    for h in range(8, 17):
-        print(f"  {h:02d}:00–{h+1:02d}:00  target={targets[h]:2d}  achieved={achieved[h]:2d}")
-    max_dev = max(abs(achieved[h] - ideal) for h in range(8, 17))
-    print(f"\nIdeal per bin = {ideal:.2f}; max absolute deviation from ideal = {max_dev:.2f}")
+# --------------------------------------------------
+# OUTPUT: TERMINAL PRINTING
+# --------------------------------------------------
+
+def print_schedule(schedule_by_week):
+    print("\n" + "=" * 72)
+    print("OBSERVATION SCHEDULE")
+    print("=" * 72)
+
+    for wb in schedule_by_week:
+        print(f"\nWeek {wb['week']} ({wb['range']}) — {wb['condition']}")
+        for day, sessions in wb["days"]:
+            # Example: 04/03/2026 (Wednesday): 09:00–10:00, ...
+            print(f"  - {format_date(day)} ({day.strftime('%A')}): {sessions}")
+
+    print("\n" + "=" * 72 + "\n")
 
 
-def write_csv(sessions: List[Session], out_path: str) -> None:
-    fieldnames = ["week", "condition", "date", "day", "session", "start", "end"]
-    with open(out_path, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
-        for s in sessions:
-            w.writerow(
-                {
-                    "week": s.week_index,
-                    "condition": s.condition,
-                    "date": s.day_date.isoformat(),
-                    "day": s.day_name,
-                    "session": s.session_index,
-                    "start": s.start_time,
-                    "end": s.end_time,
-                }
-            )
+def print_hourbin_summary(targets, achieved, ideal: float, max_abs_dev: float):
+    print("Hour-bin coverage summary (1-hour bins):")
+    for h in HOUR_BINS:
+        print(f"  {h:02d}:00–{h+1:02d}:00  target={targets[h]}  achieved={achieved.get(h, 0)}")
+    print(f"\nIdeal per bin = {ideal:.2f}; max absolute deviation from ideal = {max_abs_dev:.2f}\n")
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--start-date", required=True, help="Start date (Monday) of week 1, YYYY-MM-DD")
-    ap.add_argument("--seed", type=int, default=18, help="Random seed for reproducibility")
-    ap.add_argument("--out", default="sampling_schedule.csv", help="Output CSV path")
-    args = ap.parse_args()
-
-    start = parse_iso_date(args.start_date)
-    if start.weekday() != 0:
-        print(f"Warning: start-date {start.isoformat()} is not a Monday.")
-
-    sessions, targets, achieved = make_sessions(start_date=start, seed=args.seed)
-    sanity_checks(sessions, targets, achieved)
-
-    print_schedule(sessions, start_date=start)
-    print_hour_bin_summary(targets, achieved)
-    write_csv(sessions, args.out)
-    print(f"\nCSV written to: {args.out}")
-
+# --------------------------------------------------
+# RUN
+# --------------------------------------------------
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--start-date", required=True, help="YYYY-MM-DD (start of Week 1; ideally a Monday)")
+    parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--out", required=True, help="Schedule CSV output filename (e.g., schedule.csv)")
+    parser.add_argument(
+        "--hourbin-out",
+        default=None,
+        help="Optional hour-bin summary CSV output filename (default: <out>_hourbins.csv)"
+    )
+    args = parser.parse_args()
+
+    start = datetime.datetime.strptime(args.start_date, "%Y-%m-%d").date()
+
+    schedule_rows, schedule_by_week, targets, achieved, ideal, max_abs_dev = generate_schedule(start, args.seed)
+
+    # Print to terminal
+    print_schedule(schedule_by_week)
+    print_hourbin_summary(targets, achieved, ideal, max_abs_dev)
+
+    # Save CSV outputs
+    save_schedule_csv(schedule_rows, args.out)
+    out_path = Path(args.out)
+    hourbin_out = args.hourbin_out or str(out_path.with_name(out_path.stem + "_hourbins.csv"))
+    save_hourbin_csv(targets, achieved, ideal, max_abs_dev, hourbin_out)
+
+    print("Files written:")
+    print(f"  - {args.out}")
+    print(f"  - {hourbin_out}")
