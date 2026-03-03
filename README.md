@@ -2,12 +2,12 @@
 
 ## Overview
 
-This repository contains the Python script (`planning.py`) used to generate a constrained randomized sampling schedule for a 10-week behavioral study on captive Sunbitterns (*Eurypyga helias*).
+This repository contains the Python script (planning.py) used to generate a constrained randomized sampling schedule for a 10-week behavioral study on captive Sunbitterns (*Eurypyga helias*).
 
 The script was designed to:
 - Randomize the order of experimental conditions (Control / Natural)
 - Randomly select observation days within each week
-- Schedule 1-hour observation sessions between 08:00 and 17:00
+- Schedule 1-hour observation sessions between 09:00 and 17:00
 - Balance observation effort across all available hourly time bins
 - Ensure full reproducibility via a fixed random seed
 
@@ -24,9 +24,9 @@ The script enforces the following constraints:
 - Week 1 is fixed as Control  
   (logistical justification: experimental nests were constructed and installed during Week 1)
 - 4 observation days per week (randomly selected)
-- Mondays excluded during Week 1
+- Mondays and Tuesdays excluded during Week 1 (because of logistical reasons)
 - 4 non-overlapping 1-hour sessions per observation day
-- Observation window: 08:00–17:00 (start times between 08:00 and 16:00)
+- Observation window: 09:00–17:00 (start times between 09:00 and 16:00)
 - Total observation effort: 160 hours
 
 ---
@@ -35,22 +35,24 @@ The script enforces the following constraints:
 
 To minimize temporal sampling bias, the script balances observation effort across nine 1-hour time bins:
 
-08:00–09:00  
-09:00–10:00  
-10:00–11:00  
-11:00–12:00  
-12:00–13:00  
-13:00–14:00  
-14:00–15:00  
-15:00–16:00  
-16:00–17:00  
+09:00–10:00
+10:00–11:00
+11:00–12:00
+12:00–13:00
+13:00–14:00
+14:00–15:00
+15:00–16:00
+16:00–17:00
 
-Because 160 sessions cannot be perfectly divided across 9 bins (160/9 = 17.78), the algorithm distributes:
+Because 160 sessions are distributed across 8 bins, a perfectly even allocation is mathematically possible:
 
-- 18 sessions to 7 bins  
-- 17 sessions to 2 bins  
+160 / 8 = 20 sessions per bin 
 
-This represents the most mathematically even possible distribution.
+The algorithm therefore assigns:
+
+- 20 sessions to each hour-bin
+
+This results in a maximal temporal balance with zero structural imbalance.
 
 ---
 
@@ -64,9 +66,10 @@ cd $HOME\Desktop
 python planning.py --start-date 2026-03-02 --seed 33 --out schedule.csv  
 
 Parameters:
-- `--start-date` : Monday corresponding to Week 1 (YYYY-MM-DD format)
-- `--seed` : Random seed for reproducibility
-- `--out` : Name of the generated CSV file
+- --start-date : Monday corresponding to Week 1 (YYYY-MM-DD format)
+- --seed : Random seed for reproducibility
+- --out : Name of the generated CSV file
+- --hourbin-out (optional) : Custom filename for the hour-bin summary CSV
 
 ---
 
@@ -83,8 +86,13 @@ The script generates:
   - Session index
   - Start time
   - End time
-- An hour-bin coverage summary
-- The maximum absolute deviation from ideal temporal balance
+- A separate CSV file summarizing:
+  - Hour-bin targets
+  - Hour-bin achieved counts
+  - Ideal per-bin value
+  - Maximum absolute deviation from ideal
+- An hour-bin coverage summary in the terminal
+- The maximum absolute deviation from ideal temporal balance in the terminal
 
 ---
 
@@ -108,3 +116,5 @@ Stan (2026). Sunbittern sampling randomization script (Version 1.0). Zenodo. DOI
 ## License
 
 This project is released under the MIT License.
+
+---
