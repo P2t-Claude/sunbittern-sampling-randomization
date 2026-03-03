@@ -24,8 +24,8 @@ The script enforces the following constraints:
 - Week 1 is fixed as Control  
   (logistical justification: experimental nests were constructed and installed during Week 1)
 - 4 observation days per week (randomly selected)
-- Mondays and Tuesdays excluded during Week 1 (because of logistical reasons)
-- 4 non-overlapping 1-hour sessions per observation day
+- Monday and Tuesday excluded during Week 1 (because of logistical reasons)
+- 4 non-overlapping 1-hour sessions per observation day (randomly selected)
 - Observation window: 09:00–17:00 (start times between 09:00 and 16:00)
 - Total observation effort: 160 hours
 
@@ -63,13 +63,12 @@ The schedule is fully reproducible using a fixed random seed.
 Command used to generate the study schedule:
 
 cd $HOME\Desktop  
-python planning.py --start-date 2026-03-02 --seed 1 --out schedule.csv  
+python planning.py --start-date 2026-03-02 --seed 2 --out schedule.csv  
 
 Parameters:
 - --start-date : Monday corresponding to Week 1 (YYYY-MM-DD format)
 - --seed : Random seed for reproducibility
 - --out : Name of the generated CSV file
-- --hourbin-out (optional) : Custom filename for the hour-bin summary CSV
 
 ---
 
@@ -86,11 +85,6 @@ The script generates:
   - Session index
   - Start time
   - End time
-- A separate CSV file summarizing:
-  - Hour-bin targets
-  - Hour-bin achieved counts
-  - Ideal per-bin value
-  - Maximum absolute deviation from ideal
 - An hour-bin coverage summary in the terminal
 - The maximum absolute deviation from ideal temporal balance in the terminal
 
